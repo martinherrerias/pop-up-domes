@@ -4,11 +4,13 @@ function varargout = dome(wedges, segments, polygons, flag, opt)
 % DOME(wedges, segments, polygons) - Add projected POLYGONS: cell array of 
 %   [az, el] (degrees) matrices, or 'earth' for world map.
 % DOME(..., Name, Value)
-%   'segmentdist' - {}'parallels' (default), 'regular', 'maxvolume'}, 
-%   how to distribute segments.
+%   'segmentdist' - how to distribute segments:
+%       'parallels' (default) - top and bottom caps are twice the side angles
+%       'regular' - top and bottom caps are the same angle as sides
+%       'maxvolume' - maximize frustum volume (experimental)
 %   'radius' - 1 (default), dome radius.
 %   'flaps' - true (default), add alternate tabs cut-out.
-%   'inset' - 1e-2 (default), inset for flaps.
+%   'inset' - 1e-2 (default), clearance inset for flaps.
 %   'figsave' - false (default), save figures as PDF.
 % DOME(..., 'debug') - Show debug information
 % H = DOME([], [], [], 'localfunctions') - Return local function handles
