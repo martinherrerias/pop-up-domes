@@ -16,7 +16,7 @@ function varargout = dome(wedges, segments, polygons, flag, opt)
 % H = DOME([], [], [], 'localfunctions') - Return local function handles
 % 
 % REF: https://www.youtube.com/watch?v=2STS0POwB7g
-
+    
     arguments
         wedges double = 12
         segments double = 2 + 4*round((wedges - 2)/4)
@@ -26,7 +26,6 @@ function varargout = dome(wedges, segments, polygons, flag, opt)
         opt.radius = 1;
         opt.flaps (1,1) logical = true
         opt.inset (1,1) double = 1e-2
-        opt.figname = sprintf('%dx%d_',wedges, segments);
         opt.figsave = false;
     end
 
@@ -53,11 +52,20 @@ function varargout = dome(wedges, segments, polygons, flag, opt)
     [azimuth, elevation, V] = vertices(wedges, segments, opt);
     F = polyhedron_faces(segments, wedges);
     
-    figure([opt.figname, 'polyhedron']); clf(); hold on; axis off;
+    figname = sprintf('%dx%d_%s',wedges, segments, opt.segmentdist);
+    
+    figure([figname, 'polyhedron']); clf(); hold on; axis off;
     plot_polyhedron(V, F, opt.debug);
 
     for hemisphere = ['N', 'S']
-        figure([opt.figname, hemisphere]); clf(); hold on; axis equal; axis off;
+        
+        if isempty(polygons)
+            if hemisphere == 'S', continue; end
+            figure(figname);
+        else
+            figure([figname, '_', hemisphere]);
+        end
+        clf(); hold on; axis equal; axis off;
 
         % unit circle, and top projection
         plot_views(F, V, opt);
@@ -174,6 +182,7 @@ function [edges, centers] = wedge_centers(azimuth_breaks, hemisphere)
         case 'N'
             centers = azimuth_breaks + d/2;
         case 'S'
+            azimuth_breaks = flipud(-azimuth_breaks);
             centers = azimuth_breaks - d/2;
     end
     edges = centers(1:2:end);
@@ -190,14 +199,15 @@ function G = project(azimuth_breaks, elevation_breaks, az, el, hemisphere)
 
     azimuth_breaks = azimuth_breaks(:);
 
-    [edges, centers] = wedge_centers(azimuth_breaks, hemisphere);
     switch upper(hemisphere)
         case 'N'
             x = polygon_arc(elevation_breaks, -el); 
         case 'S'
-            x = polygon_arc(elevation_breaks, el); 
+            x = polygon_arc(elevation_breaks, el);
+            az = stdangle(-az);
     end
 
+    [edges, centers] = wedge_centers(azimuth_breaks, hemisphere);
     bin = discretize(az, edges);
     bin(az < edges(1) | az > edges(end)) = length(edges);
     y = tand(az - centers(bin)) .* cosd(el);
@@ -451,7 +461,8 @@ function plot_cutout(V, F, azimuth, elevation, hemisphere, opt)
     for j = 1:wedges/2
         [v,f] = flat_wedge(V, segments, opt);
 
-        R = rotmat(centers(j))';
+        R = rotmat(centers(j));
+        if upper(hemisphere) == 'N', R = R'; end
         v = v*R;    
         patch('Faces',f(2:end,:),'Vertices', v, style{:})
     end
