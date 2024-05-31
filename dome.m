@@ -1,6 +1,19 @@
 function varargout = dome(wedges, segments, polygons, flag, opt)
-% pop-up dome generator
-% https://www.youtube.com/watch?v=2STS0POwB7g
+% DOME() - pop-up dome generator
+% DOME(wedges, segments) - Specify number of WEDGES and SEGMENTS
+% DOME(wedges, segments, polygons) - Add projected POLYGONS: cell array of 
+%   [az, el] (degrees) matrices, or 'earth' for world map.
+% DOME(..., Name, Value)
+%   'segmentdist' - {}'parallels' (default), 'regular', 'maxvolume'}, 
+%   how to distribute segments.
+%   'radius' - 1 (default), dome radius.
+%   'flaps' - true (default), add alternate tabs cut-out.
+%   'inset' - 1e-2 (default), inset for flaps.
+%   'figsave' - false (default), save figures as PDF.
+% DOME(..., 'debug') - Show debug information
+% H = DOME([], [], [], 'localfunctions') - Return local function handles
+% 
+% REF: https://www.youtube.com/watch?v=2STS0POwB7g
 
     arguments
         wedges double = 12
@@ -8,9 +21,11 @@ function varargout = dome(wedges, segments, polygons, flag, opt)
         polygons = 'earth'
         flag char = ''
         opt.segmentdist = 'parallels';
+        opt.radius = 1;
         opt.flaps (1,1) logical = true
         opt.inset (1,1) double = 1e-2
-        opt.taper (1,1) double = 10
+        opt.figname = sprintf('%dx%d_',wedges, segments);
+        opt.figsave = false;
     end
 
     % return cell array of local functions, for unit testing
@@ -33,26 +48,33 @@ function varargout = dome(wedges, segments, polygons, flag, opt)
         polygons = load('earth.mat', 'landpolygons').landpolygons;
     end
 
-    [azimuth, elevation, V] = vertices(wedges, segments, opt.segmentdist);
+    [azimuth, elevation, V] = vertices(wedges, segments, opt);
     F = polyhedron_faces(segments, wedges);
     
-    figure('polyhedron'); clf(); hold on;
+    figure([opt.figname, 'polyhedron']); clf(); hold on; axis off;
     plot_polyhedron(V, F, opt.debug);
 
     for hemisphere = ['N', 'S']
-        figure(hemisphere); clf(); hold on; axis equal;
-    
+        figure([opt.figname, hemisphere]); clf(); hold on; axis equal; axis off;
+
         % unit circle, and top projection
-        plot_views(F, V);
+        plot_views(F, V, opt);
     
         if ~isempty(polygons)
-            plot_polygons(polygons, azimuth, elevation, hemisphere);
+            plot_polygons(polygons, azimuth, elevation, hemisphere, opt);
         end
         
         plot_cutout(V, F, azimuth, elevation, hemisphere, opt);
 
         % internal_structure()
+        if opt.figsave
+            set(gcf, 'PaperOrientation', 'landscape', 'Renderer', 'painters');
+            set(gca,'Position', [0 0 1 1]);
+            set(gcf,'PaperUnits', 'normalized', 'PaperPosition', [0 0 1 1]);
+            saveas(gcf,[gcf().Name '.pdf']);
+        end
     end
+
 end
 
 function args = styles(what)
@@ -96,11 +118,11 @@ function elevation_breaks = max_volume(segments)
     end
 end
 
-function [azimuth, elevation, V] = vertices(wedges, segments, segmentdist)
+function [azimuth, elevation, V] = vertices(wedges, segments, opt)
 % returns 2 + (S-1)*W vertices, arranged to work with WEDGE_FACES
 
     azimuth = linspace(-180, 180-360/wedges, wedges);
-    switch segmentdist
+    switch opt.segmentdist
         case 'maxvolume'
             elevation = max_volume(segments);
         case 'parallels'
@@ -114,13 +136,13 @@ function [azimuth, elevation, V] = vertices(wedges, segments, segmentdist)
 
     V = [[0,0,z(1)];
         [0,0,z(end)];
-        [x,y,z]];
+        [x,y,z]]*opt.radius;
 
-    % scale XY such that edges are tangent to unit sphere
+    % radius XY such that edges are tangent to unit sphere
     V(:,1:2) = V(:,1:2)/cosd(180/wedges);
 end
 
-function plot_polygons(polygons, azimuth_breaks, elevation_breaks, hemisphere)
+function plot_polygons(polygons, azimuth_breaks, elevation_breaks, hemisphere, opt)
 
     validateattributes(polygons, {'cell'}, {'vector'})
     assert(all(cellfun(@(x) isnumeric(x) && ismatrix(x) && size(x,2) == 2, polygons)))
@@ -130,12 +152,12 @@ function plot_polygons(polygons, azimuth_breaks, elevation_breaks, hemisphere)
         [az, el] = deal(polygons{j}(:,1), polygons{j}(:,2));
         az = stdangle(az);
         if ~(az(end) == az(1) && el(end) == el(1))
-            az(end+1) = az(1);
-            el(end+1) = el(1);
+            az(end+1) = az(1); %#ok<AGROW>
+            el(end+1) = el(1); %#ok<AGROW>
         end
         P{j} = project(azimuth_breaks, elevation_breaks, az, el, hemisphere);
     end
-    P = cat(1,P{:});
+    P = cat(1,P{:})*opt.radius;
 
     style = styles('polygon');
     plot(P(:,1), P(:,2), style{:})
@@ -316,13 +338,15 @@ end
 
 function v = flap(p, q, r, s, c, inset)
 % Returns vertices [p'] s' r' [q'], where:
-%   s' is s reflected around p-q
-%   r' is r reflected around c-q
-%   p', q' are (optional) insets from p, q
+%   s' = Q*s is s reflected around p-q
+%   r' is r reflected around c-q, and extended to the line s'Q*r,
+%      this is to make sure the flap lies within the flat circle centered at c
+%   If inset > 0, it is applied to p', q' along pq, and to s', r' along s'r'.
 %
-%       p - q                s' - r'
-%   c   |   |   [c]         /      \
-%       s - r         p - p'        q' - q
+%      p  --- q                s' -- r'      Qr
+%       \     |               /       \  
+%   c    \    |              /         \
+%        s -- r         p - p'          q' - q
 
     sm = reflect(s, p, q);
     rm = reflect(r, p, q);
@@ -385,23 +409,6 @@ function fixedangle = stdangle(angle)
     fixedangle = rem(rem(angle,360) + 540,360)-180;
 end
 
-% function internal_structure()
-% 
-%     style = styles('annotation');
-% 
-%     % internal tensors
-%     t = 0.2;
-%     a = (pi^2-8)/(4*pi - 8);
-%     x = [-t, 0, a, pi/2, pi/2 + t] + 2;
-%     y = -(0:4)*t - 2;
-% 
-% 
-%     patch('Faces',F, 'Vertices', V + [3,3,0], style.annotation{:})
-% 
-%     arrayfun(@(x) plot([x,x], y([1,end]), style{:}), x)
-%     arrayfun(@(y) plot(x([1,end]), [y,y], style{:}), y)
-% end
-
 function varargout = figure(name)
     h = findobj('type','figure','name',name);
     if isempty(h) || ~ishandle(h)
@@ -454,8 +461,12 @@ function plot_cutout(V, F, azimuth, elevation, hemisphere, opt)
     end
 end
 
-function plot_views(F, V)
+function plot_views(F, V, opt)
     style = styles('annotation');
-    ref_circles(1, 4, 2)
-    patch('Faces',F, 'Vertices', V + [4,2,0], style{:})
+    ref_circles(1, 4*opt.radius, 2*opt.radius)
+    patch('Faces',F, 'Vertices', V + [4,2,0]*opt.radius, style{:})
+
+    R = circshift(eye(3),-1,2);
+    ref_circles(1, 4*opt.radius, -2*opt.radius)
+    patch('Faces',F, 'Vertices', V*R + [4,-2,0]*opt.radius, style{:})
 end
